@@ -1,4 +1,4 @@
-"""Embedding backends: fastembed, model2vec, and API."""
+"""Embedding backends: fastembed, model2vec, sentence-transformers, and API."""
 
 import sys
 from typing import List, Optional, Protocol
@@ -6,6 +6,21 @@ from typing import List, Optional, Protocol
 import numpy as np
 
 from .config import env_config
+
+
+def _pick_device(device: Optional[str] = None) -> str:
+    """Pick the best available device: explicit > XPU > CUDA > CPU."""
+    if device and device != "auto":
+        return device
+    try:
+        import torch
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            return "xpu"
+        if torch.cuda.is_available():
+            return "cuda"
+    except ImportError:
+        pass
+    return "cpu"
 
 
 def _l2_normalize(matrix: np.ndarray) -> np.ndarray:
@@ -84,11 +99,11 @@ class FastEmbedEmbedder:
 class Model2VecEmbedder:
     """Local static embeddings via model2vec (CPU-only, no network)."""
 
-    def __init__(self, model_name: str = "minishlab/potion-multilingual-128M"):
+    def __init__(self, model_name: str):
         """Initialize model2vec embedder.
-        
+
         Args:
-            model_name: Hugging Face id or local directory path
+            model_name: Hugging Face id or local directory path (required)
         """
         try:
             from model2vec import StaticModel
@@ -111,6 +126,35 @@ class Model2VecEmbedder:
 
     def get_embedding(self, text: str) -> np.ndarray:
         """Embed a single text. Returns a (dim,) L2-normalized float32 array."""
+        return self.get_embeddings([text])[0]
+
+
+class SentenceTransformerEmbedder:
+    """Local embeddings via sentence-transformers (torch, XPU-capable)."""
+
+    def __init__(self, model_name: str, device: Optional[str] = None) -> None:
+        try:
+            from sentence_transformers import SentenceTransformer
+        except ImportError as exc:
+            raise ImportError(
+                "sentence-transformers is required for the 'sentence-transformers' embedding backend. "
+                "Install it with `pip install prussian-embeddings[sentence-transformers]`."
+            ) from exc
+
+        self.device = _pick_device(device)
+        print(f"Loading model: {model_name} on {self.device}...", file=sys.stderr)
+        self.model = SentenceTransformer(model_name, device=self.device)
+        self.dim = int(self.model.get_sentence_embedding_dimension())
+
+    def get_embeddings(self, texts: List[str]) -> np.ndarray:
+        if not texts:
+            return np.zeros((0, self.dim), dtype=np.float32)
+        emb = self.model.encode(
+            texts, convert_to_numpy=True, show_progress_bar=False, device=self.device
+        )
+        return _l2_normalize(np.asarray(emb, dtype=np.float32))
+
+    def get_embedding(self, text: str) -> np.ndarray:
         return self.get_embeddings([text])[0]
 
 
@@ -166,15 +210,17 @@ def get_embedder(
     api_key: Optional[str] = None,
     base_url: Optional[str] = None,
     dim: Optional[int] = None,
+    device: Optional[str] = None,
 ) -> Embedder:
     """Get an embedder for the specified (or configured) backend.
     
     Args:
-        backend: "fastembed" (default), "model2vec", or "api"
+        backend: "fastembed" (default), "model2vec", "sentence-transformers", or "api"
         model: Model identifier (overrides env config)
         api_key: API key for 'api' backend (overrides env config)
         base_url: API base URL (overrides env config)
         dim: Embedding dimension (overrides env config)
+        device: Device for torch-based backends (auto-detects if None)
         
     Returns:
         Embedder instance
@@ -182,11 +228,28 @@ def get_embedder(
     Raises:
         ValueError: If backend is unknown or required params are missing
     """
+    import os
+
     config = env_config()
-    
+
     # Explicit args win; gaps filled by env_config()
     backend = (backend or config.backend or "fastembed").lower()
-    model = model or config.model
+
+    # Model default must be derived from the *effective* backend, not from the
+    # EMBEDDING_BACKEND env var (which may differ when --backend is passed explicitly).
+    _DEFAULT_MODELS = {
+        "fastembed": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+        "sentence-transformers": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    }
+    if model is None:
+        model = os.getenv("EMBEDDING_MODEL") or _DEFAULT_MODELS.get(backend, config.model)
+
+    if backend == "model2vec" and not model:
+        raise ValueError(
+            "model2vec requires --model (path to a distilled model, "
+            "e.g. --model models/m2v-minilm)"
+        )
+
     api_key = api_key or config.api_key
     base_url = base_url or config.base_url
     dim = dim if dim is not None else config.dim
@@ -195,10 +258,12 @@ def get_embedder(
         return FastEmbedEmbedder(model_name=model)
     elif backend == "model2vec":
         return Model2VecEmbedder(model_name=model)
+    elif backend == "sentence-transformers":
+        return SentenceTransformerEmbedder(model_name=model, device=device)
     elif backend == "api":
         return ApiEmbedder(api_key=api_key, base_url=base_url, model=model, dim=dim)
     else:
         raise ValueError(
             f"Unknown EMBEDDING_BACKEND: {backend!r} "
-            "(expected 'fastembed', 'model2vec', or 'api')"
+            "(expected 'fastembed', 'model2vec', 'sentence-transformers', or 'api')"
         )

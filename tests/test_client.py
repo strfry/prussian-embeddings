@@ -101,6 +101,7 @@ def test_client_from_env_mock(monkeypatch):
             reranker_model="test-reranker",
             api_key="env_key",
             base_url="https://env.example.com",
+            device="",
         )
     
     import prussian_embeddings.client
