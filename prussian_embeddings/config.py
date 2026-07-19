@@ -31,7 +31,7 @@ def env_config() -> EnvConfig:
     
     # Model defaults depend on backend
     if backend == "fastembed":
-        default_model = "intfloat/multilingual-e5-small"
+        default_model = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
         default_dim = 384
     elif backend == "model2vec":
         default_model = "minishlab/potion-multilingual-128M"

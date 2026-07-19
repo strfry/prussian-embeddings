@@ -50,11 +50,11 @@ class Embedder(Protocol):
 class FastEmbedEmbedder:
     """Local embeddings via fastembed (ONNX/CPU)."""
 
-    def __init__(self, model_name: str = "intfloat/multilingual-e5-small") -> None:
+    def __init__(self, model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2") -> None:
         """Initialize fastembed embedder.
-        
+
         Args:
-            model_name: Hugging Face model ID
+            model_name: Hugging Face model ID (must be in TextEmbedding.list_supported_models())
         """
         try:
             from fastembed import TextEmbedding
@@ -66,7 +66,7 @@ class FastEmbedEmbedder:
 
         print(f"Loading embedding model: {model_name}...", file=sys.stderr)
         self.model = TextEmbedding(model_name=model_name)
-        self.dim = self.model.embedding_dim
+        self.dim = self.model.embedding_size
 
     def get_embeddings(self, texts: List[str]) -> np.ndarray:
         """Embed multiple texts. Returns an (n, dim) L2-normalized float32 array."""
