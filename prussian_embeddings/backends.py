@@ -1,7 +1,7 @@
 """Embedding backends: fastembed, model2vec, sentence-transformers, and API."""
 
 import sys
-from typing import List, Optional, Protocol
+from typing import Any, Dict, List, Optional, Protocol
 
 import numpy as np
 
@@ -14,6 +14,7 @@ def _pick_device(device: Optional[str] = None) -> str:
         return device
     try:
         import torch
+
         if hasattr(torch, "xpu") and torch.xpu.is_available():
             return "xpu"
         if torch.cuda.is_available():
@@ -41,10 +42,10 @@ class Embedder(Protocol):
 
     def get_embeddings(self, texts: List[str]) -> np.ndarray:
         """Embed multiple texts.
-        
+
         Args:
             texts: List of text strings
-            
+
         Returns:
             Array of shape (len(texts), dim), dtype float32, L2-normalized
         """
@@ -52,10 +53,10 @@ class Embedder(Protocol):
 
     def get_embedding(self, text: str) -> np.ndarray:
         """Embed a single text.
-        
+
         Args:
             text: Text string
-            
+
         Returns:
             Array of shape (dim,), dtype float32, L2-normalized
         """
@@ -65,7 +66,10 @@ class Embedder(Protocol):
 class FastEmbedEmbedder:
     """Local embeddings via fastembed (ONNX/CPU)."""
 
-    def __init__(self, model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2") -> None:
+    def __init__(
+        self,
+        model_name: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
+    ) -> None:
         """Initialize fastembed embedder.
 
         Args:
@@ -169,7 +173,7 @@ class ApiEmbedder:
         dim: int = 0,
     ):
         """Initialize API embedder.
-        
+
         Args:
             api_key: API authentication key
             base_url: API endpoint base URL
@@ -213,7 +217,7 @@ def get_embedder(
     device: Optional[str] = None,
 ) -> Embedder:
     """Get an embedder for the specified (or configured) backend.
-    
+
     Args:
         backend: "fastembed" (default), "model2vec", "sentence-transformers", or "api"
         model: Model identifier (overrides env config)
@@ -221,10 +225,10 @@ def get_embedder(
         base_url: API base URL (overrides env config)
         dim: Embedding dimension (overrides env config)
         device: Device for torch-based backends (auto-detects if None)
-        
+
     Returns:
         Embedder instance
-        
+
     Raises:
         ValueError: If backend is unknown or required params are missing
     """
@@ -242,7 +246,9 @@ def get_embedder(
         "sentence-transformers": "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2",
     }
     if model is None:
-        model = os.getenv("EMBEDDING_MODEL") or _DEFAULT_MODELS.get(backend, config.model)
+        model = os.getenv("EMBEDDING_MODEL") or _DEFAULT_MODELS.get(
+            backend, config.model
+        )
 
     if backend == "model2vec" and not model:
         raise ValueError(
@@ -253,7 +259,7 @@ def get_embedder(
     api_key = api_key or config.api_key
     base_url = base_url or config.base_url
     dim = dim if dim is not None else config.dim
-    
+
     if backend == "fastembed":
         return FastEmbedEmbedder(model_name=model)
     elif backend == "model2vec":
@@ -266,4 +272,117 @@ def get_embedder(
         raise ValueError(
             f"Unknown EMBEDDING_BACKEND: {backend!r} "
             "(expected 'fastembed', 'model2vec', 'sentence-transformers', or 'api')"
+        )
+
+
+class Reranker(Protocol):
+    """Protocol for reranking backends."""
+
+    def rerank(
+        self, query: str, documents: List[str], top_n: int = 10
+    ) -> List[Dict[str, Any]]:
+        """Rerank documents by relevance to the query.
+
+        Args:
+            query: The search query
+            documents: List of documents to rerank
+            top_n: Number of top results to return
+
+        Returns:
+            List of dicts with 'index' and 'relevance_score', sorted by score desc
+        """
+        ...
+
+
+class FastEmbedReranker:
+    """Local reranking via fastembed TextCrossEncoder (ONNX/CPU)."""
+
+    def __init__(self, model_name: str = "Xenova/ms-marco-MiniLM-L-6-v2") -> None:
+        try:
+            from fastembed.rerank.cross_encoder import TextCrossEncoder
+        except ImportError as exc:
+            raise ImportError(
+                "fastembed is required for local reranking. "
+                "Install it with `pip install prussian-embeddings[local]`."
+            ) from exc
+
+        print(f"Loading reranker model: {model_name}...", file=sys.stderr)
+        self.model = TextCrossEncoder(model_name=model_name)
+
+    def rerank(
+        self, query: str, documents: List[str], top_n: int = 10
+    ) -> List[Dict[str, Any]]:
+        scores = list(self.model.rerank(query, documents))
+        ranked = sorted(enumerate(scores), key=lambda x: x[1], reverse=True)[:top_n]
+        return [{"index": i, "relevance_score": float(s)} for i, s in ranked]
+
+
+class ApiReranker:
+    """Remote reranking via EmbeddingClient (Jina API)."""
+
+    def __init__(
+        self,
+        api_key: str = "",
+        base_url: str = "",
+        model: str = "",
+    ):
+        from .client import EmbeddingClient
+
+        if not api_key:
+            raise ValueError(
+                "api_key is required for the 'api' reranker backend. "
+                "Set via API_KEY or EMBEDDING_API_KEY environment variable."
+            )
+
+        self.client = EmbeddingClient(
+            api_key=api_key,
+            base_url=base_url,
+            reranker_model=model,
+        )
+
+    def rerank(
+        self, query: str, documents: List[str], top_n: int = 10
+    ) -> List[Dict[str, Any]]:
+        import anyio
+
+        return anyio.run(self.client.rerank, query, documents, top_n)
+
+
+def get_reranker(
+    backend: Optional[str] = None,
+    *,
+    model: Optional[str] = None,
+    api_key: Optional[str] = None,
+    base_url: Optional[str] = None,
+) -> Reranker:
+    """Get a reranker for the specified (or configured) backend.
+
+    Args:
+        backend: "fastembed" (default) or "api"
+        model: Model identifier (overrides env config)
+        api_key: API key for 'api' backend (overrides env config)
+        base_url: API base URL (overrides env config)
+
+    Returns:
+        Reranker instance
+
+    Raises:
+        ValueError: If backend is unknown or required params are missing
+    """
+    config = env_config()
+
+    backend = (backend or config.reranker_backend or "fastembed").lower()
+    model = model or config.reranker_model
+
+    if backend == "fastembed":
+        return FastEmbedReranker(model_name=model)
+    elif backend == "api":
+        return ApiReranker(
+            api_key=api_key or config.api_key,
+            base_url=base_url or config.base_url,
+            model=model,
+        )
+    else:
+        raise ValueError(
+            f"Unknown RERANKER_BACKEND: {backend!r} (expected 'fastembed' or 'api')"
         )
