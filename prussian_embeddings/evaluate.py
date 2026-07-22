@@ -196,7 +196,7 @@ def evaluate_spec(
     q_vecs = []
     for i in range(0, len(texts), batch_size):
         batch = texts[i : i + batch_size]
-        q_vecs.append(embedder.get_embeddings(batch))
+        q_vecs.append(embedder.get_embeddings(batch, is_query=True))
     q_vecs = np.vstack(q_vecs)
     query_time = time.time() - start
 

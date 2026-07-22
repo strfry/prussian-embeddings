@@ -135,7 +135,7 @@ def hybrid_query(
     """
     # Dense candidates — use top_k directly to preserve store doc indices
     query_text = query_prefix + text if query_prefix else text
-    query_vec = embedder.get_embedding(query_text)
+    query_vec = embedder.get_embedding(query_text, is_query=True)
     dense_top = store.top_k(query_vec, k=candidates)
 
     # BM25 candidates — already returns (doc_idx, score)

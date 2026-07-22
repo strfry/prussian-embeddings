@@ -178,7 +178,7 @@ class EmbeddingStore:
             List of (record, score) tuples, sorted by score descending
         """
         query_text = query_prefix + text if query_prefix else text
-        query_vec = embedder.get_embedding(query_text)
+        query_vec = embedder.get_embedding(query_text, is_query=True)
         
         top_results = self.top_k(query_vec, k=k)
         

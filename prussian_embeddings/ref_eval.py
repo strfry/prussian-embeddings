@@ -225,7 +225,7 @@ def evaluate_rank(
         texts = [prefix + q.word for q in queries]
         vecs = []
         for i in range(0, len(texts), batch_size):
-            vecs.append(embedder.get_embeddings(texts[i : i + batch_size]))
+            vecs.append(embedder.get_embeddings(texts[i : i + batch_size], is_query=True))
         return _l2_normalize(np.vstack(vecs))
 
     chunk_q_vecs = embed_queries(chunk_prefix)

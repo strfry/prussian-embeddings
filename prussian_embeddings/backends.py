@@ -40,22 +40,26 @@ class Embedder(Protocol):
         """Embedding dimension."""
         ...
 
-    def get_embeddings(self, texts: List[str]) -> np.ndarray:
+    def get_embeddings(self, texts: List[str], *, is_query: bool = False) -> np.ndarray:
         """Embed multiple texts.
 
         Args:
             texts: List of text strings
+            is_query: True for search queries, False for passages/documents.
+                API backends use this to select the provider query/passage
+                parameter; local backends ignore it (they use text prefixes).
 
         Returns:
             Array of shape (len(texts), dim), dtype float32, L2-normalized
         """
         ...
 
-    def get_embedding(self, text: str) -> np.ndarray:
+    def get_embedding(self, text: str, *, is_query: bool = False) -> np.ndarray:
         """Embed a single text.
 
         Args:
             text: Text string
+            is_query: True for a search query, False for a passage/document.
 
         Returns:
             Array of shape (dim,), dtype float32, L2-normalized
@@ -87,15 +91,19 @@ class FastEmbedEmbedder:
         self.model = TextEmbedding(model_name=model_name)
         self.dim = self.model.embedding_size
 
-    def get_embeddings(self, texts: List[str]) -> np.ndarray:
-        """Embed multiple texts. Returns an (n, dim) L2-normalized float32 array."""
+    def get_embeddings(self, texts: List[str], *, is_query: bool = False) -> np.ndarray:
+        """Embed multiple texts. Returns an (n, dim) L2-normalized float32 array.
+
+        ``is_query`` is accepted for interface parity but ignored — local models
+        signal query/passage via text prefixes, applied by the caller.
+        """
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
         # fastembed returns embeddings as a generator of lists
         embeddings = list(self.model.embed(texts))
         return _l2_normalize(np.array(embeddings, dtype=np.float32))
 
-    def get_embedding(self, text: str) -> np.ndarray:
+    def get_embedding(self, text: str, *, is_query: bool = False) -> np.ndarray:
         """Embed a single text. Returns a (dim,) L2-normalized float32 array."""
         return self.get_embeddings([text])[0]
 
@@ -121,14 +129,17 @@ class Model2VecEmbedder:
         self.model = StaticModel.from_pretrained(model_name)
         self.dim = int(self.model.dim)
 
-    def get_embeddings(self, texts: List[str]) -> np.ndarray:
-        """Embed multiple texts. Returns an (n, dim) L2-normalized float32 array."""
+    def get_embeddings(self, texts: List[str], *, is_query: bool = False) -> np.ndarray:
+        """Embed multiple texts. Returns an (n, dim) L2-normalized float32 array.
+
+        ``is_query`` is accepted for interface parity but ignored.
+        """
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
         embeddings = self.model.encode(texts)
         return _l2_normalize(embeddings)
 
-    def get_embedding(self, text: str) -> np.ndarray:
+    def get_embedding(self, text: str, *, is_query: bool = False) -> np.ndarray:
         """Embed a single text. Returns a (dim,) L2-normalized float32 array."""
         return self.get_embeddings([text])[0]
 
@@ -150,7 +161,8 @@ class SentenceTransformerEmbedder:
         self.model = SentenceTransformer(model_name, device=self.device, trust_remote_code=trust_remote_code)
         self.dim = int(self.model.get_sentence_embedding_dimension())
 
-    def get_embeddings(self, texts: List[str]) -> np.ndarray:
+    def get_embeddings(self, texts: List[str], *, is_query: bool = False) -> np.ndarray:
+        """``is_query`` is accepted for interface parity but ignored."""
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
         emb = self.model.encode(
@@ -158,7 +170,7 @@ class SentenceTransformerEmbedder:
         )
         return _l2_normalize(np.asarray(emb, dtype=np.float32))
 
-    def get_embedding(self, text: str) -> np.ndarray:
+    def get_embedding(self, text: str, *, is_query: bool = False) -> np.ndarray:
         return self.get_embeddings([text])[0]
 
 
@@ -171,6 +183,7 @@ class ApiEmbedder:
         base_url: str = "",
         model: str = "",
         dim: int = 0,
+        provider: str = "",
     ):
         """Initialize API embedder.
 
@@ -179,6 +192,7 @@ class ApiEmbedder:
             base_url: API endpoint base URL
             model: Model identifier on the API
             dim: Embedding dimension
+            provider: API provider ("voyage", "jina", "generic"); "" auto-detects
         """
         from .client import EmbeddingClient
 
@@ -193,18 +207,19 @@ class ApiEmbedder:
             base_url=base_url,
             embedding_model=model,
             embedding_dim=dim,
+            provider=provider,
         )
         self.dim = dim if dim > 0 else self.client.embedding_dim
 
-    def get_embeddings(self, texts: List[str]) -> np.ndarray:
+    def get_embeddings(self, texts: List[str], *, is_query: bool = False) -> np.ndarray:
         """Embed multiple texts via API."""
         if not texts:
             return np.zeros((0, self.dim), dtype=np.float32)
-        return self.client.get_embeddings(texts)
+        return self.client.get_embeddings(texts, is_query=is_query)
 
-    def get_embedding(self, text: str) -> np.ndarray:
+    def get_embedding(self, text: str, *, is_query: bool = False) -> np.ndarray:
         """Embed a single text via API."""
-        return self.client.get_embedding(text)
+        return self.client.get_embedding(text, is_query=is_query)
 
 
 def get_embedder(
@@ -271,14 +286,19 @@ def get_embedder(
     elif backend == "sentence-transformers":
         return SentenceTransformerEmbedder(model_name=model, device=device, trust_remote_code=trust_remote_code)
     elif backend == "api":
-        is_jina = "jina.ai" in (base_url or "")
-        if is_jina and query_prefix:
+        from .config import resolve_provider
+
+        provider = resolve_provider(base_url or "", model or "", config.provider)
+        if provider in ("jina", "voyage") and query_prefix:
             print(
                 f"WARNING: query_prefix={query_prefix!r} ignored — "
-                f"JINA uses task parameter instead of text prefixes",
+                f"{provider} uses a request parameter (task/input_type) "
+                f"instead of text prefixes",
                 file=sys.stderr,
             )
-        return ApiEmbedder(api_key=api_key, base_url=base_url, model=model, dim=dim)
+        return ApiEmbedder(
+            api_key=api_key, base_url=base_url, model=model, dim=dim, provider=provider
+        )
     else:
         raise ValueError(
             f"Unknown EMBEDDING_BACKEND: {backend!r} "

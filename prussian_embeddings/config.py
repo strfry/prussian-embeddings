@@ -15,7 +15,38 @@ class EnvConfig:
     reranker_model: str
     api_key: str
     base_url: str
+    provider: str = ""
     device: str = ""
+
+
+def resolve_provider(base_url: str = "", model: str = "", explicit: str = "") -> str:
+    """Resolve the embedding API provider (for query/passage parameter selection).
+
+    Modern embedding APIs signal query-vs-passage via a request *parameter*
+    (Voyage: ``input_type``, Jina: ``task``) rather than a text prefix. Which
+    parameter/values to use depends on the provider, resolved here.
+
+    Precedence: explicit value wins; otherwise auto-detected from the base URL
+    *or* the model slug (covers both direct provider APIs and LiteLLM-style
+    ``provider/model`` slugs). Falls back to ``"generic"`` (no extra parameter,
+    safe for plain OpenAI-compatible endpoints).
+
+    Args:
+        base_url: API endpoint base URL.
+        model: Model identifier (may be a ``voyage/…`` / ``jina_ai/…`` slug).
+        explicit: Explicit provider override (e.g. from EMBEDDING_PROVIDER).
+
+    Returns:
+        One of ``"voyage"``, ``"jina"``, or ``"generic"``.
+    """
+    if explicit:
+        return explicit.lower()
+    haystack = f"{base_url} {model}".lower()
+    if "voyage" in haystack:
+        return "voyage"
+    if "jina" in haystack:
+        return "jina"
+    return "generic"
 
 
 def env_config() -> EnvConfig:
@@ -26,6 +57,8 @@ def env_config() -> EnvConfig:
     - EMBEDDING_MODEL: model identifier
     - EMBEDDING_DIM: embedding dimension (default depends on backend)
     - EMBEDDING_DEVICE: device for torch-based backends (default "" = auto)
+    - EMBEDDING_PROVIDER: API provider for query/passage parameter selection
+      ("voyage", "jina", "generic"; default "" = auto-detect from URL/model)
     - RERANKER_BACKEND: "fastembed" (default) or "api"
     - RERANKER_MODEL: reranker model
     - API_KEY / EMBEDDING_API_KEY: API authentication (JINA_API_KEY is fallback)
@@ -50,6 +83,7 @@ def env_config() -> EnvConfig:
     model = os.getenv("EMBEDDING_MODEL", default_model)
     dim = int(os.getenv("EMBEDDING_DIM", str(default_dim)))
     device = os.getenv("EMBEDDING_DEVICE", "")
+    provider = os.getenv("EMBEDDING_PROVIDER", "")
 
     reranker_backend = os.getenv("RERANKER_BACKEND", "fastembed").lower()
     default_reranker_model = (
@@ -75,5 +109,6 @@ def env_config() -> EnvConfig:
         reranker_model=reranker_model,
         api_key=api_key,
         base_url=base_url,
+        provider=provider,
         device=device,
     )

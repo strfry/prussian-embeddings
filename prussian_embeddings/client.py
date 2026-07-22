@@ -5,11 +5,11 @@ from typing import Any, Dict, List
 import httpx
 import numpy as np
 
-from .config import env_config
+from .config import env_config, resolve_provider
 
 
 class EmbeddingClient:
-    """Client for embedding and reranking APIs (e.g., Jina AI)."""
+    """Client for embedding and reranking APIs (e.g., Jina AI, Voyage)."""
 
     def __init__(
         self,
@@ -18,16 +18,18 @@ class EmbeddingClient:
         embedding_model: str = "",
         embedding_dim: int = 0,
         reranker_model: str = "",
+        provider: str = "",
         timeout: float = 120.0,
     ):
         """Initialize embedding client.
-        
+
         Args:
             api_key: API authentication key
             base_url: API endpoint base URL
             embedding_model: Model ID for embeddings
             embedding_dim: Embedding dimension
             reranker_model: Model ID for reranking
+            provider: API provider ("voyage", "jina", "generic"); "" auto-detects
             timeout: Request timeout in seconds
         """
         self.api_key = api_key
@@ -36,7 +38,7 @@ class EmbeddingClient:
         self.embedding_dim = embedding_dim
         self.reranker_model = reranker_model
         self.timeout = timeout
-        self.is_jina = "jina.ai" in self.base_url
+        self.provider = resolve_provider(self.base_url, embedding_model, provider)
 
     @classmethod
     def from_env(cls) -> "EmbeddingClient":
@@ -48,13 +50,32 @@ class EmbeddingClient:
             embedding_model=config.model,
             embedding_dim=config.dim,
             reranker_model=config.reranker_model,
+            provider=config.provider,
         )
 
-    def get_embeddings(self, texts: List[str]) -> np.ndarray:
+    def _input_type_param(self, is_query: bool) -> Dict[str, Any]:
+        """Provider-specific query/passage parameter for the embeddings request.
+
+        Modern APIs distinguish queries from passages via a request parameter
+        (not a text prefix), and the parameter name/values differ per provider:
+
+        - voyage → ``input_type``: "query" / "document"
+        - jina   → ``task``: "retrieval.query" / "retrieval.passage"
+        - generic → none (OpenAI-compatible endpoints reject unknown fields)
+        """
+        if self.provider == "voyage":
+            return {"input_type": "query" if is_query else "document"}
+        if self.provider == "jina":
+            return {"task": "retrieval.query" if is_query else "retrieval.passage"}
+        return {}
+
+    def get_embeddings(self, texts: List[str], *, is_query: bool = False) -> np.ndarray:
         """Get embeddings for a list of texts.
 
         Args:
             texts: List of text strings to embed
+            is_query: True for search queries, False for passages/documents.
+                Controls the provider-specific query/passage parameter.
 
         Returns:
             numpy array of shape (len(texts), embedding_dim), dtype float32
@@ -67,9 +88,7 @@ class EmbeddingClient:
             "model": self.embedding_model,
             "input": texts,
         }
-
-        if self.is_jina:
-            payload["task"] = "retrieval.passage"
+        payload.update(self._input_type_param(is_query))
 
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(
@@ -103,16 +122,17 @@ class EmbeddingClient:
                 embeddings.append(vec)
             return np.array(embeddings, dtype=np.float32)
 
-    def get_embedding(self, text: str) -> np.ndarray:
+    def get_embedding(self, text: str, *, is_query: bool = False) -> np.ndarray:
         """Get embedding for a single text.
-        
+
         Args:
             text: Text to embed
-            
+            is_query: True for a search query, False for a passage/document.
+
         Returns:
             numpy array of shape (embedding_dim,), dtype float32
         """
-        embeddings = self.get_embeddings([text])
+        embeddings = self.get_embeddings([text], is_query=is_query)
         return embeddings[0]
 
     async def rerank(

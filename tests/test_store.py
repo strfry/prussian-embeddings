@@ -17,7 +17,7 @@ class FakeEmbedder:
         self.dim = dim
         self._counter = 0
 
-    def get_embeddings(self, texts):
+    def get_embeddings(self, texts, *, is_query: bool = False):
         """Return deterministic fake embeddings."""
         embeddings = []
         for text in texts:
@@ -31,7 +31,7 @@ class FakeEmbedder:
             self._counter += 1
         return np.array(embeddings, dtype=np.float32)
 
-    def get_embedding(self, text):
+    def get_embedding(self, text, *, is_query: bool = False):
         """Return single fake embedding."""
         return self.get_embeddings([text])[0]
 

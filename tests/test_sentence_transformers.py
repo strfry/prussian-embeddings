@@ -97,10 +97,12 @@ class TestGetEmbedderRouting:
             mock_m2v.assert_called_once_with(model_name="some/path")
 
     def test_api_unchanged(self):
-        """api backend should still work unchanged."""
+        """api backend routes to ApiEmbedder with a resolved provider."""
         with patch("prussian_embeddings.backends.ApiEmbedder") as mock_api:
             get_embedder("api", api_key="key", base_url="url", model="m", dim=64)
-            mock_api.assert_called_once_with(api_key="key", base_url="url", model="m", dim=64)
+            mock_api.assert_called_once_with(
+                api_key="key", base_url="url", model="m", dim=64, provider="generic"
+            )
 
     def test_unknown_backend_raises(self):
         with pytest.raises(ValueError, match="Unknown EMBEDDING_BACKEND"):

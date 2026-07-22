@@ -129,7 +129,7 @@ class FakeEmbedder:
 
     dim = 4
 
-    def get_embeddings(self, texts):
+    def get_embeddings(self, texts, *, is_query: bool = False):
         vecs = []
         for t in texts:
             h = hash(t) % 1000
@@ -141,7 +141,7 @@ class FakeEmbedder:
         norms = np.clip(norms, a_min=1e-10, a_max=None)
         return vecs / norms
 
-    def get_embedding(self, text):
+    def get_embedding(self, text, *, is_query: bool = False):
         return self.get_embeddings([text])[0]
 
 

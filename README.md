@@ -196,11 +196,31 @@ prefixes) against an unprefixed distillate without a global flag.
 - `EMBEDDING_MODEL` – model identifier
 - `EMBEDDING_DIM` – output dimension (inferred from model if not set)
 - `EMBEDDING_DEVICE` – device for torch-based backends (default: auto-detect)
+- `EMBEDDING_PROVIDER` – API provider for query/passage handling: "voyage", "jina",
+  or "generic" (default: `""` = auto-detect from `API_BASE_URL` / model slug)
 - `RERANKER_MODEL` – reranker model (for API backend)
 - `API_KEY` / `JINA_API_KEY` – API authentication
 - `API_BASE_URL` – API endpoint
-- `QUERY_PREFIX` – query text prefix (for asymmetric search)
-- `PASSAGE_PREFIX` – passage text prefix
+- `QUERY_PREFIX` – query text prefix (for asymmetric search; local/e5 models only)
+- `PASSAGE_PREFIX` – passage text prefix (local/e5 models only)
+
+### Query vs. passage on the `api` backend
+
+Local e5-style models distinguish a search query from an indexed passage with a
+**text prefix** (`query: ` / `passage: `). Modern embedding APIs instead take a
+**request parameter**, and its name/values differ per provider:
+
+| Provider  | Parameter    | Query value        | Passage value         |
+|-----------|--------------|--------------------|-----------------------|
+| `voyage`  | `input_type` | `query`            | `document`            |
+| `jina`    | `task`       | `retrieval.query`  | `retrieval.passage`   |
+| `generic` | *(none)*     | —                  | —                     |
+
+The provider is resolved from `EMBEDDING_PROVIDER` (explicit) or auto-detected
+from `API_BASE_URL` / the model slug (e.g. `voyage/…`, `jina_ai/…`). The `api`
+backend sets this parameter automatically — search queries embed as queries,
+generated passages as documents — so **leave `QUERY_PREFIX`/`PASSAGE_PREFIX`
+empty for `voyage`/`jina`** (a set prefix is warned about and ignored).
 
 ## License
 

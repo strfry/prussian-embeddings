@@ -53,10 +53,10 @@ class TokenStubEmbedder:
             return np.zeros(self.dim, dtype=np.float32)
         return (vec / norm).astype(np.float32)
 
-    def get_embeddings(self, texts):
+    def get_embeddings(self, texts, *, is_query: bool = False):
         return np.array([self._embed(t) for t in texts], dtype=np.float32)
 
-    def get_embedding(self, text):
+    def get_embedding(self, text, *, is_query: bool = False):
         return self._embed(text)
 
 
@@ -418,10 +418,10 @@ class StubWrongDimEmbedder:
     def __init__(self, dim=32):
         self.dim = dim
 
-    def get_embeddings(self, texts):
+    def get_embeddings(self, texts, *, is_query: bool = False):
         return np.zeros((len(texts), self.dim), dtype=np.float32)
 
-    def get_embedding(self, text):
+    def get_embedding(self, text, *, is_query: bool = False):
         return np.zeros(self.dim, dtype=np.float32)
 
 
@@ -456,12 +456,12 @@ class SpyEmbedder:
         self._stub = TokenStubEmbedder(dim=dim, seed=seed)
         self.embedded_texts: list[str] = []
 
-    def get_embeddings(self, texts):
+    def get_embeddings(self, texts, *, is_query: bool = False):
         self.embedded_texts.extend(texts)
-        return self._stub.get_embeddings(texts)
+        return self._stub.get_embeddings(texts, is_query=is_query)
 
-    def get_embedding(self, text):
-        return self._stub.get_embedding(text)
+    def get_embedding(self, text, *, is_query: bool = False):
+        return self._stub.get_embedding(text, is_query=is_query)
 
 
 class TestStoreQueryPrefix:
@@ -526,12 +526,12 @@ class RecordingEmbedder:
         self.dim = inner.dim
         self.seen_texts = []
 
-    def get_embeddings(self, texts):
+    def get_embeddings(self, texts, *, is_query: bool = False):
         self.seen_texts.extend(texts)
-        return self.inner.get_embeddings(texts)
+        return self.inner.get_embeddings(texts, is_query=is_query)
 
-    def get_embedding(self, text):
-        return self.inner.get_embedding(text)
+    def get_embedding(self, text, *, is_query: bool = False):
+        return self.inner.get_embedding(text, is_query=is_query)
 
 
 class TestQueryPrefixFromMeta:
