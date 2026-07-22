@@ -415,6 +415,12 @@ def main():
         help="Device for torch-based backends (auto-detects if None)",
     )
     parser.add_argument(
+        "--trust-remote-code",
+        action="store_true",
+        default=False,
+        help="Trust remote code when loading Hugging Face models (required for e.g. nomic-embed-text-v1)",
+    )
+    parser.add_argument(
         "--json",
         type=str,
         default=None,
@@ -463,7 +469,7 @@ def main():
                     file=sys.stderr,
                 )
 
-            embedder = get_embedder(backend=backend, model=model, device=args.device)
+            embedder = get_embedder(backend=backend, model=model, device=args.device, trust_remote_code=args.trust_remote_code)
 
             # Dim sanity check
             emb_dim = int(store.embeddings.shape[1])
@@ -519,7 +525,7 @@ def main():
 
         for spec in specs:
             backend, model = parse_spec(spec)
-            embedder = get_embedder(backend=backend, model=model, device=args.device)
+            embedder = get_embedder(backend=backend, model=model, device=args.device, trust_remote_code=args.trust_remote_code)
 
             print(f"\nBuilding index for {spec}...")
             start = time.time()

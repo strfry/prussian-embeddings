@@ -258,7 +258,7 @@ def main():
         model_ref = str(model_dir)
     else:
         # fastembed / sentence-transformers / api: load embedder directly
-        embedder = get_embedder(backend=args.backend, model=args.model, device=args.device)
+        embedder = get_embedder(backend=args.backend, model=args.model, device=args.device, trust_remote_code=args.trust_remote_code)
         model_ref = args.model or "default"
 
     embedding_dim = embedder.dim

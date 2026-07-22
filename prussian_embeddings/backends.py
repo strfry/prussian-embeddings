@@ -136,7 +136,7 @@ class Model2VecEmbedder:
 class SentenceTransformerEmbedder:
     """Local embeddings via sentence-transformers (torch, XPU-capable)."""
 
-    def __init__(self, model_name: str, device: Optional[str] = None) -> None:
+    def __init__(self, model_name: str, device: Optional[str] = None, trust_remote_code: bool = False) -> None:
         try:
             from sentence_transformers import SentenceTransformer
         except ImportError as exc:
@@ -147,7 +147,7 @@ class SentenceTransformerEmbedder:
 
         self.device = _pick_device(device)
         print(f"Loading model: {model_name} on {self.device}...", file=sys.stderr)
-        self.model = SentenceTransformer(model_name, device=self.device)
+        self.model = SentenceTransformer(model_name, device=self.device, trust_remote_code=trust_remote_code)
         self.dim = int(self.model.get_sentence_embedding_dimension())
 
     def get_embeddings(self, texts: List[str]) -> np.ndarray:
@@ -215,6 +215,7 @@ def get_embedder(
     base_url: Optional[str] = None,
     dim: Optional[int] = None,
     device: Optional[str] = None,
+    trust_remote_code: bool = False,
 ) -> Embedder:
     """Get an embedder for the specified (or configured) backend.
 
@@ -225,6 +226,7 @@ def get_embedder(
         base_url: API base URL (overrides env config)
         dim: Embedding dimension (overrides env config)
         device: Device for torch-based backends (auto-detects if None)
+        trust_remote_code: Trust remote code when loading Hugging Face models
 
     Returns:
         Embedder instance
@@ -265,7 +267,7 @@ def get_embedder(
     elif backend == "model2vec":
         return Model2VecEmbedder(model_name=model)
     elif backend == "sentence-transformers":
-        return SentenceTransformerEmbedder(model_name=model, device=device)
+        return SentenceTransformerEmbedder(model_name=model, device=device, trust_remote_code=trust_remote_code)
     elif backend == "api":
         return ApiEmbedder(api_key=api_key, base_url=base_url, model=model, dim=dim)
     else:
