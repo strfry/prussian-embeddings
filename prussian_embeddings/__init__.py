@@ -20,6 +20,17 @@ from .passages import (
     make_passage,
     LANGUAGE_ORDER,
 )
+from .build_chunks import (
+    build_chunks,
+    build_clusters,
+    load_links,
+    load_tags,
+    read_chunks,
+    write_chunks,
+    entry_pos,
+    pos_from_tags,
+    pos_from_desc,
+)
 
 __all__ = [
     "get_embedder",
@@ -39,4 +50,13 @@ __all__ = [
     "word_type",
     "make_passage",
     "LANGUAGE_ORDER",
+    "build_chunks",
+    "build_clusters",
+    "load_links",
+    "load_tags",
+    "read_chunks",
+    "write_chunks",
+    "entry_pos",
+    "pos_from_tags",
+    "pos_from_desc",
 ]

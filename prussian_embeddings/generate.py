@@ -11,6 +11,77 @@ from pathlib import Path
 from .backends import Model2VecEmbedder, get_embedder
 from .store import EmbeddingStore
 from .passages import has_translations, make_passage
+from .build_chunks import read_chunks
+
+
+def _generate_from_chunks(args):
+    """Embed a ref-clustered embedding_chunks.jsonl (from build_chunks).
+
+    Each chunk's ``text`` is embedded as one passage (with ``--passage-prefix``);
+    the chunk dicts themselves become the store records. ``strategy`` is
+    ``"chunks"`` in the meta so downstream tools can tell the sets apart.
+    """
+    chunks_path = Path(args.chunks)
+    if not chunks_path.exists():
+        print(f"ERROR: chunks not found at {chunks_path}", file=sys.stderr)
+        sys.exit(1)
+
+    chunks = read_chunks(chunks_path)
+    print(f"\nLoading chunks: {chunks_path}")
+    print(f"  {len(chunks)} chunks")
+
+    embedder = get_embedder(backend=args.backend, model=args.model, device=args.device)
+    print(f"Dim:          {embedder.dim}")
+
+    texts = [args.passage_prefix + c["text"] for c in chunks]
+    if texts:
+        print(f"  Example: {texts[0]!r}")
+
+    print("\nGenerating embeddings...")
+    start = time.time()
+
+    def progress_callback(batch_num, num_batches, total):
+        pct = (batch_num / num_batches) * 100
+        print(
+            f"  [{pct:5.1f}%] Batch {batch_num}/{num_batches} ({total} embeddings)",
+            end="\r",
+        )
+
+    store = EmbeddingStore.build(
+        embedder,
+        texts=texts,
+        records=chunks,
+        batch_size=args.batch_size,
+        progress=progress_callback,
+    )
+
+    elapsed = time.time() - start
+    print()
+    print(f"  Done: {elapsed:.1f}s ({len(texts) / max(elapsed, 1e-9):.0f} chunks/s)")
+    print(f"  Shape: {store.embeddings.shape}")
+
+    try:
+        bv = importlib.metadata.version(args.backend)
+    except importlib.metadata.PackageNotFoundError:
+        bv = ""
+
+    store.meta = {
+        "backend": args.backend,
+        "model": args.model or "default",
+        "provider": "local" if args.backend in ("fastembed", "model2vec", "sentence-transformers") else "api",
+        "strategy": "chunks",
+        "num_entries": len(chunks),
+        "embedding_dim": int(store.embeddings.shape[1]),
+        "passage_prefix": args.passage_prefix,
+        "query_prefix": args.query_prefix,
+        "backend_version": bv,
+    }
+
+    print(f"\nSaving to: {args.out}")
+    store.save(args.out)
+    print(f"\n{'=' * 60}")
+    print(f"Saved {len(chunks)} chunk embeddings ({store.embeddings.shape[1]}d)")
+    print("=" * 60)
 
 
 def main():
@@ -23,6 +94,15 @@ def main():
         type=str,
         default="../corpus/parsed/twanksta_entries.json",
         help="Path to dictionary JSON file",
+    )
+    parser.add_argument(
+        "--chunks",
+        type=str,
+        default=None,
+        help=(
+            "Path to a ref-clustered embedding_chunks.jsonl (from build_chunks). "
+            "When set, embeds each chunk's 'text' instead of dictionary passages."
+        ),
     )
     parser.add_argument(
         "--backend",
@@ -93,6 +173,11 @@ def main():
         print(f"PCA dims:     {args.pca_dims}")
         print(f"Device:       {args.device}")
     print("=" * 60)
+
+    # Chunks mode: embed pre-built ref-clustered chunks instead of passages.
+    if args.chunks:
+        _generate_from_chunks(args)
+        return
 
     # Load dictionary
     dict_path = Path(args.dictionary)

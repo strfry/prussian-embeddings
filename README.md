@@ -135,6 +135,41 @@ uv run --extra local --extra sentence-transformers prussian-embeddings-eval \
     --store data/embeddings_fastembed_e5large --store data/embeddings_st_e5large
 ```
 
+### Ref-clustered chunks (with the FST linker)
+
+Instead of embedding each entry alone, `build-chunks` groups entries that share
+a base lemma into one chunk and embeds them together, so translation-less
+inflected/derived forms become findable through the co-embedded base lemma. The
+resolution work is delegated to the `prussian-fst` desc-ref linker — chunk
+building only consumes its output:
+
+- `links.json` — the linker's resolved links (`python -m prussian_fst.linker
+  --corpus twanksta_entries.json --out-dir build`). Unresolved refs
+  (`gap` / `ambiguous`) are ignored by design.
+- `tags.json` (optional) — headword → FST tag strings (from
+  `prussian_fst.api.tags`), the authoritative part-of-speech source. Without it,
+  POS falls back to link tags then `desc` markers.
+
+```bash
+# 1. Build ref-clustered chunks
+prussian-embeddings-build-chunks \
+    --dictionary ../corpus/parsed/twanksta_entries.json \
+    --links ../prussian-fst/build/links.json \
+    --tags  ../prussian-fst/build/tags.json \
+    --out data/embedding_chunks.jsonl
+
+# 2. Embed the chunks (strategy="chunks" in the store meta)
+uv run --extra sentence-transformers prussian-embeddings-generate \
+    --chunks data/embedding_chunks.jsonl \
+    --backend sentence-transformers --model intfloat/multilingual-e5-large \
+    --passage-prefix "passage: " --query-prefix "query: " \
+    --device xpu --out data/embeddings_st_e5large_chunks
+```
+
+Each chunk is `{"lemma", "members", "pos", "pos_source", "text"}`; the multi-line
+`text` (base lemma passage + one line per form, each labelled with its POS) is
+what gets embedded.
+
 ### Evaluate
 
 ```bash
