@@ -36,6 +36,7 @@ class EmbeddingClient:
         self.embedding_dim = embedding_dim
         self.reranker_model = reranker_model
         self.timeout = timeout
+        self.is_jina = "jina.ai" in self.base_url
 
     @classmethod
     def from_env(cls) -> "EmbeddingClient":
@@ -62,10 +63,13 @@ class EmbeddingClient:
         if self.api_key:
             headers["Authorization"] = f"Bearer {self.api_key}"
 
-        payload = {
+        payload: Dict[str, Any] = {
             "model": self.embedding_model,
             "input": texts,
         }
+
+        if self.is_jina:
+            payload["task"] = "retrieval.passage"
 
         with httpx.Client(timeout=self.timeout) as client:
             response = client.post(

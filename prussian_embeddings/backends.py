@@ -216,6 +216,7 @@ def get_embedder(
     dim: Optional[int] = None,
     device: Optional[str] = None,
     trust_remote_code: bool = False,
+    query_prefix: str = "",
 ) -> Embedder:
     """Get an embedder for the specified (or configured) backend.
 
@@ -227,6 +228,7 @@ def get_embedder(
         dim: Embedding dimension (overrides env config)
         device: Device for torch-based backends (auto-detects if None)
         trust_remote_code: Trust remote code when loading Hugging Face models
+        query_prefix: Prefix for queries — warned and ignored for JINA backends
 
     Returns:
         Embedder instance
@@ -269,6 +271,13 @@ def get_embedder(
     elif backend == "sentence-transformers":
         return SentenceTransformerEmbedder(model_name=model, device=device, trust_remote_code=trust_remote_code)
     elif backend == "api":
+        is_jina = "jina.ai" in (base_url or "")
+        if is_jina and query_prefix:
+            print(
+                f"WARNING: query_prefix={query_prefix!r} ignored — "
+                f"JINA uses task parameter instead of text prefixes",
+                file=sys.stderr,
+            )
         return ApiEmbedder(api_key=api_key, base_url=base_url, model=model, dim=dim)
     else:
         raise ValueError(
