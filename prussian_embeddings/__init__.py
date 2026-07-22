@@ -31,6 +31,19 @@ from .build_chunks import (
     pos_from_tags,
     pos_from_desc,
 )
+from .chunk_rerank import (
+    split_lines,
+    translation_tokens,
+    rank_lines,
+    token_scores,
+    annotate_chunk,
+)
+from .hybrid import (
+    tokenize,
+    BM25Index,
+    reciprocal_rank_fusion,
+    hybrid_query,
+)
 
 __all__ = [
     "get_embedder",
@@ -59,4 +72,13 @@ __all__ = [
     "entry_pos",
     "pos_from_tags",
     "pos_from_desc",
+    "split_lines",
+    "translation_tokens",
+    "rank_lines",
+    "token_scores",
+    "annotate_chunk",
+    "tokenize",
+    "BM25Index",
+    "reciprocal_rank_fusion",
+    "hybrid_query",
 ]

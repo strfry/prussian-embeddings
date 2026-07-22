@@ -25,7 +25,8 @@ from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 
 from .backends import get_embedder
-from .evaluate import Bucket, _l2_normalize, resolve_embedder_config
+from .evaluate import Bucket, _l2_normalize
+from .store import resolve_embedder_config
 from .passages import has_translations
 from .store import EmbeddingStore
 

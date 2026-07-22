@@ -188,3 +188,54 @@ class EmbeddingStore:
                 results.append((self.records[idx], score))
         
         return results
+
+    @classmethod
+    def load_with_embedder(
+        cls,
+        stem: str,
+        *,
+        device: Optional[str] = None,
+        trust_remote_code: bool = False,
+    ) -> Tuple["EmbeddingStore", Any]:
+        """Load store and create matching embedder from metadata.
+
+        Returns (store, embedder).
+        Raises ValueError on dim mismatch.
+        """
+        from .backends import get_embedder
+
+        store = cls.load(stem)
+        backend, model = resolve_embedder_config(store.meta)
+        embedder = get_embedder(
+            backend=backend, model=model,
+            device=device, trust_remote_code=trust_remote_code,
+        )
+        emb_dim = int(store.embeddings.shape[1])
+        if hasattr(embedder, "dim") and embedder.dim != emb_dim:
+            raise ValueError(
+                f"embedder dim={embedder.dim} != store dim={emb_dim}"
+            )
+        return store, embedder
+
+
+def resolve_embedder_config(meta: dict) -> Tuple[str, Optional[str]]:
+    """Resolve backend and model name from store metadata.
+
+    Pure function — no side effects, easy to test.
+
+    Args:
+        meta: metadata dict (from {stem}.meta.json)
+
+    Returns:
+        (backend, model) tuple; model is None for default models.
+
+    Raises:
+        ValueError: If meta["backend"] is missing.
+    """
+    backend = meta.get("backend")
+    if not backend:
+        raise ValueError("store metadata missing 'backend' field")
+    model = meta.get("model")
+    if model in ("default", "", None):
+        model = None
+    return backend, model

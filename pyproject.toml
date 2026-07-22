@@ -20,6 +20,7 @@ dev = ["pytest>=8"]
 prussian-embeddings-generate = "prussian_embeddings.generate:main"
 prussian-embeddings-eval = "prussian_embeddings.evaluate:main"
 prussian-embeddings-build-chunks = "prussian_embeddings.build_chunks:main"
+prussian-embeddings-search = "prussian_embeddings.search_cli:main"
 
 [build-system]
 requires = ["hatchling>=1.21"]

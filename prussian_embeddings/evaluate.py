@@ -13,7 +13,7 @@ from typing import Dict, List, Optional, Set, Tuple
 import numpy as np
 
 from .passages import has_translations, make_passage
-from .store import EmbeddingStore
+from .store import EmbeddingStore, resolve_embedder_config  # re-export for backward compat
 
 PASSAGE_LANGS = ["engl", "miks", "leit", "latt"]
 
@@ -55,29 +55,6 @@ def parse_spec(spec: str) -> Tuple[str, Optional[str]]:
         backend, model = spec.split(":", 1)
         return backend, model
     return spec, None
-
-
-def resolve_embedder_config(meta: dict) -> Tuple[str, Optional[str]]:
-    """Resolve backend and model name from store metadata.
-
-    Pure function — no side effects, easy to test.
-
-    Args:
-        meta: metadata dict (from {stem}.meta.json)
-
-    Returns:
-        (backend, model) tuple; model is None for default models.
-
-    Raises:
-        ValueError: If meta["backend"] is missing.
-    """
-    backend = meta.get("backend")
-    if not backend:
-        raise ValueError("store metadata missing 'backend' field")
-    model = meta.get("model")
-    if model in ("default", "", None):
-        model = None
-    return backend, model
 
 
 def _installed_version(backend: str) -> Optional[str]:
@@ -353,7 +330,7 @@ def main():
     parser.add_argument(
         "--dictionary",
         type=str,
-        default="../../corpus/parsed/twanksta_entries.json",
+        default="../corpus/parsed/twanksta_entries.json",
         help="Path to dictionary JSON file (only used in --spec mode)",
     )
     parser.add_argument(
@@ -454,7 +431,13 @@ def main():
         # ---- Store mode: load pre-generated artefacts ----
         for stem in stores:
             print(f"\nLoading store: {stem}")
-            store = EmbeddingStore.load(stem)
+            try:
+                store, embedder = EmbeddingStore.load_with_embedder(
+                    stem, device=args.device, trust_remote_code=args.trust_remote_code
+                )
+            except ValueError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                sys.exit(1)
             backend, model = resolve_embedder_config(store.meta)
             print(f"  backend={backend}  model={model or '(default)'}")
 
@@ -469,16 +452,7 @@ def main():
                     file=sys.stderr,
                 )
 
-            embedder = get_embedder(backend=backend, model=model, device=args.device, trust_remote_code=args.trust_remote_code)
-
-            # Dim sanity check
             emb_dim = int(store.embeddings.shape[1])
-            if hasattr(embedder, "dim") and embedder.dim != emb_dim:
-                print(
-                    f"ERROR: embedder dim={embedder.dim} != store dim={emb_dim}",
-                    file=sys.stderr,
-                )
-                sys.exit(1)
             print(f"  {store.embeddings.shape[0]} entries, dim={emb_dim}")
 
             records = store.records
