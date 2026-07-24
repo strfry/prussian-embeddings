@@ -1,6 +1,8 @@
 """Embedding backends: fastembed, model2vec, sentence-transformers, and API."""
 
+import asyncio
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Optional, Protocol
 
 import numpy as np
@@ -376,7 +378,19 @@ class ApiReranker:
     ) -> List[Dict[str, Any]]:
         import anyio
 
-        return anyio.run(self.client.rerank, query, documents, top_n)
+        try:
+            asyncio.get_running_loop()
+        except RuntimeError:
+            return anyio.run(self.client.rerank, query, documents, top_n)
+
+        # A loop is already running in this thread (e.g. an async MCP
+        # server handling this call) — anyio.run() can't nest another
+        # one here, so run the coroutine in its own thread instead.
+        with ThreadPoolExecutor(max_workers=1) as pool:
+            future = pool.submit(
+                anyio.run, self.client.rerank, query, documents, top_n
+            )
+            return future.result()
 
 
 def get_reranker(
