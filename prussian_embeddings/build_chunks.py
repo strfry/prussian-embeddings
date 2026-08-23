@@ -345,8 +345,8 @@ def main() -> None:
     )
     parser.add_argument(
         "--links",
-        required=True,
-        help="Path to the FST linker's links.json",
+        default="../fst/build/links.json",
+        help="Path to the FST linker's links.json (default: ../fst/build/links.json)",
     )
     parser.add_argument(
         "--tags",

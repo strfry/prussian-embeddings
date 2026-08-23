@@ -3,6 +3,7 @@
 import argparse
 import importlib.metadata
 import json
+import os
 import sys
 import time
 from datetime import datetime, timezone
@@ -107,21 +108,20 @@ def main():
     parser.add_argument(
         "--backend",
         type=str,
-        default="fastembed",
-        choices=["fastembed", "model2vec", "sentence-transformers", "api"],
-        help="Embedding backend",
+        default=None,
+        help="Embedding backend (default: EMBEDDING_BACKEND env, else fastembed)",
     )
     parser.add_argument(
         "--model",
         type=str,
         default=None,
-        help="Model identifier. For model2vec: base HF model to distill from.",
+        help="Model identifier (default: EMBEDDING_MODEL env). For model2vec: base HF model to distill from.",
     )
     parser.add_argument(
         "--out",
         type=str,
-        default="data/embeddings_fastembed",
-        help="Output file stem (for model2vec, also used as model directory)",
+        default=f"data/{os.getenv('EMBEDDINGS_NAME', 'embeddings_fastembed')}",
+        help="Output file stem (default: data/$EMBEDDINGS_NAME)",
     )
     parser.add_argument(
         "--passage-prefix",
@@ -161,6 +161,13 @@ def main():
     )
 
     args = parser.parse_args()
+
+    # Unset flags fall back to the central env config (EMBEDDING_BACKEND etc.)
+    from .config import env_config
+
+    cfg = env_config()
+    args.backend = args.backend or cfg.backend
+    args.model = args.model or (cfg.model or None)
 
     print("=" * 60)
     print("Generating Embeddings")

@@ -388,7 +388,7 @@ def main():
     parser.add_argument(
         "--dictionary",
         type=str,
-        default="../fst/data/external/twanksta_entries.json",
+        default="../corpus/parsed/twanksta_entries.json",
         help="Path to dictionary JSON",
     )
     parser.add_argument(
