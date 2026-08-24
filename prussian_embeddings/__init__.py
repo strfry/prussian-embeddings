@@ -40,6 +40,9 @@ from .chunk_rerank import (
 )
 from .hybrid import (
     tokenize,
+    prefix_tokens,
+    ngram_tokens,
+    weighted_rrf,
     BM25Index,
     reciprocal_rank_fusion,
     hybrid_query,
@@ -78,6 +81,9 @@ __all__ = [
     "token_scores",
     "annotate_chunk",
     "tokenize",
+    "prefix_tokens",
+    "ngram_tokens",
+    "weighted_rrf",
     "BM25Index",
     "reciprocal_rank_fusion",
     "hybrid_query",
