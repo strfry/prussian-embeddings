@@ -1253,10 +1253,12 @@ sentence-transformers = [
 [package.dev-dependencies]
 dev = [
     { name = "abydos" },
-    { name = "einops" },
-    { name = "model2vec", extra = ["distill"] },
     { name = "pandas" },
     { name = "pytest" },
+]
+distill = [
+    { name = "einops" },
+    { name = "model2vec", extra = ["distill"] },
 ]
 
 [package.metadata]
@@ -1279,10 +1281,12 @@ provides-extras = ["local", "model2vec", "distill", "sentence-transformers", "de
 [package.metadata.requires-dev]
 dev = [
     { name = "abydos", specifier = ">=0.5.0" },
-    { name = "einops", specifier = ">=0.8.2" },
-    { name = "model2vec", extras = ["distill"], specifier = ">=0.8.2" },
     { name = "pandas", specifier = ">=3.0.3" },
     { name = "pytest", specifier = ">=9.1.1" },
+]
+distill = [
+    { name = "einops", specifier = ">=0.8.2" },
+    { name = "model2vec", extras = ["distill"], specifier = ">=0.8.2" },
 ]
 
 [[package]]
