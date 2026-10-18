@@ -31,8 +31,10 @@ packages = ["prussian_embeddings"]
 
 [dependency-groups]
 dev = [
+    "abydos>=0.5.0",
     "einops>=0.8.2",
     "model2vec[distill]>=0.8.2",
+    "pandas>=3.0.3",
     "pytest>=9.1.1",
 ]
 
