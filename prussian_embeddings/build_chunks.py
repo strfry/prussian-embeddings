@@ -1,5 +1,10 @@
 """Build ref-clustered embedding chunks from the dictionary + FST linker output.
 
+The dictionary is the lean Twanksta NVH (``../corpus/parsed/twanksta_dmlex.nvh``),
+read via ``prussian_fst.nvh``. Every entry carries its NVH ``id`` (``be-1``,
+``be-2`` for homographs); chunks list them as ``member_ids`` next to the
+``members`` words, so a consumer can show exactly the embedded entries.
+
 Instead of embedding each dictionary entry in isolation, entries that share a
 base lemma are grouped into one *chunk* and embedded together. The grouping is
 driven by the FST linker (``prussian-fst``, ``prussian_fst.linker``), which
@@ -13,8 +18,9 @@ re-implemented here):
 - ``links.json`` — the linker's resolved links. One record per resolved
   ``desc`` reference::
 
-      {"orig_lemma": <entry word>, "ref": <ref form>, "lemmas": [<FST lemma>, ...],
-       "tags": ["V+Ind+Pres+P1+Pl", ...], "method": "macron", ...}
+      {"orig_lemma": <entry word>, "orig_id": <entry id>, "ref": <ref form>,
+       "lemmas": [<FST lemma>, ...], "tags": ["V+Ind+Pres+P1+Pl", ...],
+       "method": "macron", ...}
 
   ``lemmas`` is a list (usually one; several when the linker resolves a
   cluster) — the first is used as the grouping lemma. The older singular
@@ -25,9 +31,9 @@ re-implemented here):
   ``prussian_fst.api.tags``: ``{<word>: ["Adj+Sg+Nom", ...]}``. When present it
   is the authoritative part-of-speech source for that word.
 
-Part-of-speech per entry is resolved in priority order: the entry's own FST
-tags (``tags.json``) → the tags of its resolved link → a ``desc`` marker
-fallback → none. Unresolved / unanalyzable entries simply carry no POS label
+Part-of-speech per entry is resolved in priority order: the entry's NVH
+``pos`` → its own FST tags (``tags.json``) → the tags of its resolved link → a
+``desc`` marker fallback → none. Unresolved / unanalyzable entries simply carry no POS label
 and are passed through as singleton chunks.
 """
 
@@ -41,9 +47,27 @@ from collections import OrderedDict, defaultdict
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
+from prussian_fst.nvh import DEFAULT_LEAN_NVH, read_entries
+
 from .passages import translations, word_type
 
-DEFAULT_LANGS = ["engl", "miks", "leit", "latt"]
+DEFAULT_LANGS = ["en", "de", "lt", "lv"]
+
+# NVH ``pos`` value → written-out part of speech.
+NVH_POS = {
+    "noun": "noun",
+    "verb": "verb",
+    "adj": "adjective",
+    "adv": "adverb",
+    "num": "numeral",
+    "pron": "pronoun",
+    "prep": "preposition",
+    "postp": "postposition",
+    "cconj": "conjunction",
+    "sconj": "conjunction",
+    "intj": "interjection",
+    "part": "particle",
+}
 
 # FST top-level category tag → written-out part of speech (tag names as emitted
 # by the prussian-fst analyzer).
@@ -131,6 +155,11 @@ def pos_from_desc(desc: str) -> Optional[str]:
     return DESC_MARKER_POS.get(marker)
 
 
+def entry_key(entry: Dict) -> str:
+    """Identity of an entry: its NVH ``id``, else the bare word."""
+    return entry.get("id") or entry.get("word", "")
+
+
 def entry_pos(
     entry: Dict,
     links_by_orig: Dict[str, List[Dict]],
@@ -138,15 +167,18 @@ def entry_pos(
 ) -> Tuple[Optional[str], Optional[str]]:
     """Resolve (pos, source) for one entry.
 
-    Priority: the word's own FST analysis (``tags.json``) → the FST tags of its
-    resolved link → a ``desc`` marker → ``(None, None)``.
+    Priority: the NVH ``pos`` → the word's own FST analysis (``tags.json``) →
+    the FST tags of its resolved link → a ``desc`` marker → ``(None, None)``.
     """
     word = entry.get("word", "")
+    pos = NVH_POS.get(entry.get("pos", ""))
+    if pos:
+        return pos, "nvh"
     if tags_by_word:
         pos = pos_from_tags(tags_by_word.get(word, []))
         if pos:
             return pos, "fst"
-    for rec in links_by_orig.get(word, []):
+    for rec in links_by_orig.get(entry_key(entry), []):
         pos = pos_from_tags(rec.get("tags", []))
         if pos:
             return pos, "fst"
@@ -165,18 +197,20 @@ def _rec_lemma(rec: Dict) -> Optional[str]:
 
 
 def load_links(path: str | Path) -> Dict[str, List[Dict]]:
-    """Load the linker's ``links.json`` into ``{orig_lemma: [resolved record]}``.
+    """Load the linker's ``links.json`` into ``{orig_id: [resolved record]}``.
 
-    Each kept record is normalized to carry a singular ``lemma`` (first of
-    ``lemmas``). Unresolved records (no lemma) are dropped — ignored by design.
+    Records are keyed by the entry id (``orig_id``), falling back to
+    ``orig_lemma`` for links without one. Each kept record is normalized to
+    carry a singular ``lemma`` (first of ``lemmas``). Unresolved records (no
+    lemma) are dropped — ignored by design.
     """
     records = json.loads(Path(path).read_text(encoding="utf-8"))
     by_orig: Dict[str, List[Dict]] = defaultdict(list)
     for rec in records:
         lemma = _rec_lemma(rec)
-        if lemma and rec.get("orig_lemma"):
-            rec = {**rec, "lemma": lemma}
-            by_orig[rec["orig_lemma"]].append(rec)
+        key = rec.get("orig_id") or rec.get("orig_lemma")
+        if lemma and key:
+            by_orig[key].append({**rec, "lemma": lemma})
     return by_orig
 
 
@@ -224,7 +258,7 @@ def build_clusters(
 
         # A resolved link to a different lemma → join that lemma's cluster.
         target = None
-        for rec in links_by_orig.get(word, []):
+        for rec in links_by_orig.get(entry_key(entry), []):
             if rec["lemma"].casefold() != wfold:
                 target = rec["lemma"]
                 break
@@ -272,7 +306,8 @@ def build_chunks(
     Each chunk::
 
         {"lemma": <cluster key>, "members": [word, ...],
-         "pos": <pos or None>, "pos_source": <"fst"|"desc"|None>,
+         "member_ids": [entry id, ...],
+         "pos": <pos or None>, "pos_source": <"nvh"|"fst"|"desc"|None>,
          "text": "<line>\\n<line>..."}
 
     The chunk ``pos`` is taken from the member matching the cluster lemma (the
@@ -297,6 +332,7 @@ def build_chunks(
             {
                 "lemma": lemma,
                 "members": [e["word"] for e in members],
+                "member_ids": [entry_key(e) for e in members],
                 "pos": chunk_pos,
                 "pos_source": chunk_src,
                 "text": "\n".join(lines),
@@ -325,23 +361,14 @@ def read_chunks(path: str | Path) -> List[Dict]:
     return chunks
 
 
-def _load_entries(path: Path) -> List[Dict]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if isinstance(data, dict):
-        return list(data.values())
-    if isinstance(data, list):
-        return data
-    raise SystemExit("ERROR: expected list or dict in dictionary JSON")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Build ref-clustered embedding chunks (dictionary + FST links)"
     )
     parser.add_argument(
         "--dictionary",
-        default="../corpus/parsed/twanksta_entries.json",
-        help="Path to dictionary JSON (twanksta_entries.json)",
+        default=str(DEFAULT_LEAN_NVH),
+        help="Path to the lean NVH (default: ../corpus/parsed/twanksta_dmlex.nvh)",
     )
     parser.add_argument(
         "--links",
@@ -370,7 +397,7 @@ def main() -> None:
         print(f"ERROR: dictionary not found at {dict_path}", file=sys.stderr)
         sys.exit(1)
 
-    entries = _load_entries(dict_path)
+    entries = read_entries(dict_path)
     links_by_orig = load_links(args.links)
     tags_by_word = load_tags(args.tags) if args.tags else None
     langs = [c.strip() for c in args.langs.split(",") if c.strip()]

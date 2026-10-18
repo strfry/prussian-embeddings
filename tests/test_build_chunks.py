@@ -128,6 +128,19 @@ def test_build_clusters_homographs_not_merged():
     assert len(clusters) == 2
 
 
+def test_build_clusters_links_keyed_by_entry_id():
+    # Homographs share the word, not the id: only be-2's link groups it.
+    entries = [
+        {"id": "be-1", "word": "be", "translations": {"en": ["without"]}},
+        {"id": "be-2", "word": "be", "translations": {"en": ["and"]}},
+        {"id": "bhe", "word": "bhe", "translations": {"en": ["and"]}},
+    ]
+    links = {"be-2": [{"lemma": "bhe", "tags": ["Cnj"]}]}
+    by_lemma = {c["lemma"]: [e["id"] for e in c["members"]]
+                for c in build_clusters(entries, links).values()}
+    assert by_lemma == {"be": ["be-1"], "bhe": ["be-2", "bhe"]}
+
+
 # ── full chunk build ──
 
 def test_build_chunks_text_and_pos():
@@ -148,6 +161,21 @@ def test_build_chunks_text_and_pos():
     adj = by_lemma["arktisks"]
     assert adj["pos"] == "adjective"
     assert adj["text"] == "arktisks (adjective): arctic"
+
+
+def test_build_chunks_member_ids_and_nvh_pos():
+    entries = [
+        {"id": "be-1", "word": "be", "pos": "prep",
+         "translations": {"en": ["without"], "de": ["ohne"]}},
+        {"id": "be-2", "word": "be", "pos": "cconj",
+         "translations": {"en": ["and"], "de": ["und"]}},
+    ]
+    # NVH pos wins over FST tags of the word.
+    chunks = build_chunks(entries, {}, {"be": ["Prp"]})
+    assert [c["member_ids"] for c in chunks] == [["be-1"], ["be-2"]]
+    assert [(c["pos"], c["pos_source"]) for c in chunks] == [
+        ("preposition", "nvh"), ("conjunction", "nvh")]
+    assert chunks[1]["text"] == "be (conjunction): and | und"
 
 
 def test_build_chunks_passthrough_without_pos():
