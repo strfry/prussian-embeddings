@@ -137,48 +137,25 @@ uv run --extra local --extra sentence-transformers prussian-embeddings-eval \
 
 ### Ref-clustered chunks (with the FST linker)
 
-Instead of embedding each entry alone, `build-chunks` groups entries that share
-a base lemma into one chunk and embeds them together, so translation-less
-inflected/derived forms become findable through the co-embedded base lemma. The
-resolution work is delegated to the `prussian-fst` desc-ref linker — chunk
-building only consumes its output:
+`build-chunks` reads the lean NVH (`../corpus/parsed/twanksta_dmlex.nvh`) and
+puts each translation-less inflected form into the chunk of its base entry, so
+the form becomes findable through the base lemma's translations. Derivatives
+and compounds stay separate chunks. The links come from the `prussian-fst`
+linker (`make -C ../fst links` → `../fst/build/links.json`), which resolves the
+`↑` references of form entries (`wīrans ↑ Wīrs acc sg m`). A form line carries
+only its grammar (`wīrans (noun) acc sg m`), not the attestations.
 
-- `links.json` — the linker's resolved links (`make links` in `../fst`, runs
-  `python -m prussian_fst.linker`). Unresolved refs (`gap`) are ignored by
-  design.
-- `tags.json` (optional) — headword → FST tag strings (from
-  `prussian_fst.api.tags`), the authoritative part-of-speech source. Without it,
-  POS falls back to link tags then `desc` markers.
+Each chunk is `{"lemma", "members", "member_ids", "pos", "pos_source", "text"}`;
+`member_ids` are the NVH entry ids (homographs `be-1`/`be-2` stay apart), and
+the multi-line `text` is what gets embedded.
 
-**Production pipeline** (rebuilds the store served by the MCP server). The
-canonical dictionary lives in `../corpus/parsed/twanksta_entries.json` (built
-by `twanksta_parse.py` in the corpus repo) — all consumers reference it
-directly, there are no copies. All paths are CLI defaults; the only
-"parameter" is the provider env file:
+**Production pipeline** (rebuilds the store served by the MCP server):
 
 ```bash
 source ../mcp/env.voyage.sh   # backend, model, API key, EMBEDDINGS_NAME
-make pipeline                 # corpus parse → fst links → chunks → store
-
-# Restart the MCP server (systemd user service / start_mcp.sh):
-# the engine loads the stores only at startup.
+make pipeline                 # fst links → chunks → store
+# then restart the MCP server: the engine loads the store only at startup.
 ```
-
-The individual steps (`make chunks`, `make store`) and their underlying CLIs
-(`prussian-embeddings-build-chunks`, `prussian-embeddings-generate`) can be run
-separately; defaults: dictionary `../corpus/parsed/twanksta_entries.json`,
-links `../fst/build/links.json`, output stem `data/$EMBEDDINGS_NAME`.
-
-Freshness chain — after any change to `prussian-fst/linker.py` or the
-dictionary data just rerun `make pipeline`: every stage reads its inputs from
-canonical locations, and `make -C ../fst links` rebuilds only what changed.
-A stale `links.json` would silently cluster unrelated entries into one chunk;
-`fst/tests/test_linker.py::test_links_artifact_no_uppercase_refs` guards
-against stale artifacts.
-
-Each chunk is `{"lemma", "members", "pos", "pos_source", "text"}`; the multi-line
-`text` (base lemma passage + one line per form, each labelled with its POS) is
-what gets embedded.
 
 ### Evaluate
 

@@ -7,25 +7,26 @@ read via ``prussian_fst.nvh``. Every entry carries its NVH ``id`` (``be-1``,
 
 Instead of embedding each dictionary entry in isolation, entries that share a
 base lemma are grouped into one *chunk* and embedded together. The grouping is
-driven by the FST linker (``prussian-fst``, ``prussian_fst.linker``), which
-resolves each entry's ``desc`` reference to an FST lemma. Forms and derivatives
-that resolve to the same lemma land in the same chunk, so a translation-less
-inflected form becomes findable through the co-embedded base lemma.
+driven by the linker (``prussian-fst``, ``prussian_fst.linker``), which
+resolves each inflected-form entry's ``↑`` reference (``wīrans ↑ Wīrs acc sg
+m``) to its base entry. A form lands in its base entry's chunk, so a
+translation-less inflected form becomes findable through the co-embedded base
+lemma. Derivatives and compounds stay separate chunks.
 
 Two FST-produced inputs (the resolution work is delegated to the linker, not
 re-implemented here):
 
 - ``links.json`` — the linker's resolved links. One record per resolved
-  ``desc`` reference::
+  ``↑`` reference::
 
       {"orig_lemma": <entry word>, "orig_id": <entry id>, "ref": <ref form>,
-       "lemmas": [<FST lemma>, ...], "tags": ["V+Ind+Pres+P1+Pl", ...],
-       "method": "macron", ...}
+       "target_ids": [<base entry id>, ...], "lemmas": [<base word>],
+       "tags": ["N+Msc+Sg+Acc", ...], "method": "headword", ...}
 
-  ``lemmas`` is a list (usually one; several when the linker resolves a
-  cluster) — the first is used as the grouping lemma. The older singular
-  ``lemma`` key is still accepted. ``links_unresolved.json`` (status ``gap`` /
-  ``ambiguous``) is ignored by design.
+  ``target_ids`` names the base entries (several for homographs of matching
+  part of speech). Records without it fall back to all entries of ``lemmas[0]``
+  (or the older singular ``lemma``). ``links_unresolved.json`` is ignored by
+  design.
 
 - ``tags.json`` (optional) — headword → FST analyses, produced by
   ``prussian_fst.api.tags``: ``{<word>: ["Adj+Sg+Nom", ...]}``. When present it
@@ -219,71 +220,103 @@ def load_tags(path: str | Path) -> Dict[str, List[str]]:
     return json.loads(Path(path).read_text(encoding="utf-8"))
 
 
+def _target_keys(rec: Dict, keys_by_word: Dict[str, List[str]]) -> List[str]:
+    """Entry keys a link points at: its ``target_ids``, else all entries of its lemma."""
+    if rec.get("target_ids"):
+        return list(rec["target_ids"])
+    return keys_by_word.get(rec["lemma"].casefold(), [])
+
+
 def build_clusters(
     entries: List[Dict],
     links_by_orig: Dict[str, List[Dict]],
 ) -> "OrderedDict[str, Dict]":
-    """Group entries into ref-clusters keyed by their resolved base lemma.
+    """Group entries into ref-clusters, one per linked base entry.
 
     Only genuine link relationships group entries:
 
-    - An entry with a resolved link to lemma L (L ≠ its own word) joins the
-      cluster of L.
-    - An entry whose own word is the target of some other entry's link anchors
-      that lemma's cluster.
+    - An entry with resolved links joins the cluster of each target entry
+      (``target_ids``; several when the linker kept more than one homograph,
+      so the form then appears in each of their chunks).
+    - Chains (form → form → base) are followed to the base entry.
+    - A target entry anchors its own cluster, first in line.
     - Every other entry is a singleton — kept separate even from same-spelled
       homographs (they are not merged by bare spelling).
 
-    Insertion order is preserved so output is deterministic. The internal
-    ``OrderedDict`` key is unique per cluster; ``cluster["lemma"]`` is the
-    display headword.
+    Insertion order follows the entries, so output is deterministic. The
+    internal ``OrderedDict`` key is unique per cluster; ``cluster["lemma"]`` is
+    the display headword.
     """
-    # Lemmas that some entry resolves to (normalized) → forms will attach here.
-    target_lemmas = {
-        rec["lemma"].casefold()
-        for recs in links_by_orig.values()
-        for rec in recs
-    }
+    by_key = {entry_key(e): e for e in entries}
+    keys_by_word: Dict[str, List[str]] = defaultdict(list)
+    for e in entries:
+        keys_by_word[e["word"].casefold()].append(entry_key(e))
+
+    targets_of: Dict[str, List[str]] = {}
+    for e in entries:
+        key = entry_key(e)
+        targets = [t for rec in links_by_orig.get(key, [])
+                   for t in _target_keys(rec, keys_by_word)
+                   if t != key and t in by_key]
+        if targets:
+            targets_of[key] = list(dict.fromkeys(targets))
+
+    def base_of(key: str, seen: frozenset = frozenset()) -> List[str]:
+        # Follow chains (form → form → base) to entries that link nowhere.
+        if key not in targets_of or key in seen:
+            return [key]
+        return [b for t in targets_of[key] for b in base_of(t, seen | {key})]
+
+    targets_of = {k: list(dict.fromkeys(b for t in ts for b in base_of(t, frozenset({k}))
+                                        if b != k))
+                  for k, ts in targets_of.items()}
+    targets_of = {k: ts for k, ts in targets_of.items() if ts}
+    anchors = {t for ts in targets_of.values() for t in ts}
 
     clusters: "OrderedDict[str, Dict]" = OrderedDict()
 
-    def cluster_for(key: str, lemma: str) -> Dict:
+    def cluster_for(key: str) -> Dict:
         if key not in clusters:
-            clusters[key] = {"lemma": lemma, "members": []}
+            clusters[key] = {"lemma": by_key[key]["word"], "members": []}
         return clusters[key]
 
     for idx, entry in enumerate(entries):
-        word = entry["word"]
-        wfold = word.casefold()
-
-        # A resolved link to a different lemma → join that lemma's cluster.
-        target = None
-        for rec in links_by_orig.get(entry_key(entry), []):
-            if rec["lemma"].casefold() != wfold:
-                target = rec["lemma"]
-                break
-
-        if target is not None:
-            cluster_for(f"lemma:{target.casefold()}", target)["members"].append(entry)
-        elif wfold in target_lemmas:
-            # This entry is a base lemma other forms point at — anchor it.
-            cluster_for(f"lemma:{wfold}", word)["members"].append(entry)
+        key = entry_key(entry)
+        if key in targets_of:
+            for target in targets_of[key]:
+                cluster_for(target)["members"].append(entry)
+        elif key in anchors:
+            cluster_for(key)["members"].insert(0, entry)
         else:
             # Standalone entry: unique key so homographs never merge.
-            cluster_for(f"solo:{idx}:{word}", word)["members"].append(entry)
+            clusters[f"solo:{idx}:{key}"] = {"lemma": entry["word"],
+                                             "members": [entry]}
 
     return clusters
+
+
+def _form_grammar(desc: str, refs: Sequence[str]) -> str:
+    """A linked form's desc reduced to its grammar: ``↑ Wīrs acc sg m
+    [Wīrans 93]`` → ``acc sg m``. The target is the chunk's anchor anyway and
+    the ``[...]`` attestations only spend the embedder's token budget."""
+    desc = re.sub(r"\[[^\]]*\]", " ", desc)
+    for ref in refs:
+        desc = desc.replace(f"↑ {ref}", " ")
+    desc = re.sub(r"↑\s*\S+", " ", desc)
+    return re.sub(r"\s+", " ", desc).strip(" ,")
 
 
 def _entry_line(
     entry: Dict,
     pos: Optional[str],
     langs: Sequence[str],
+    refs: Sequence[str] = (),
 ) -> str:
     """One chunk line for an entry: ``word (pos): tr | tr`` or ``word (pos) desc``.
 
     Translation-less forms still get a line (word + optional desc) so the base
-    lemma's chunk exposes the inflected/derived form to the embedder.
+    lemma's chunk exposes the inflected/derived form to the embedder. A linked
+    form (``refs``) shows only the grammar part of its desc.
     """
     word = entry.get("word", "")
     head = f"{word} ({pos})" if pos else word
@@ -291,6 +324,8 @@ def _entry_line(
     if trans:
         return f"{head}: " + " | ".join(trans)
     desc = (entry.get("desc") or "").strip()
+    if refs:
+        desc = _form_grammar(desc, refs)
     return f"{head} {desc}".strip() if desc else head
 
 
@@ -323,7 +358,9 @@ def build_chunks(
         chunk_src: Optional[str] = None
         for entry in members:
             pos, src = entry_pos(entry, links_by_orig, tags_by_word)
-            lines.append(_entry_line(entry, pos, langs))
+            refs = [rec.get("ref", "")
+                    for rec in links_by_orig.get(entry_key(entry), [])]
+            lines.append(_entry_line(entry, pos, langs, [r for r in refs if r]))
             # Prefer the anchor (word == cluster lemma) for the chunk POS.
             is_anchor = entry["word"].casefold() == lemma.casefold()
             if pos and (chunk_pos is None or is_anchor):

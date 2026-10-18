@@ -138,7 +138,36 @@ def test_build_clusters_links_keyed_by_entry_id():
     links = {"be-2": [{"lemma": "bhe", "tags": ["Cnj"]}]}
     by_lemma = {c["lemma"]: [e["id"] for e in c["members"]]
                 for c in build_clusters(entries, links).values()}
-    assert by_lemma == {"be": ["be-1"], "bhe": ["be-2", "bhe"]}
+    # The base entry anchors its cluster, first in line.
+    assert by_lemma == {"be": ["be-1"], "bhe": ["bhe", "be-2"]}
+
+
+def test_build_clusters_form_joins_each_target():
+    # A form linked to two same-POS homographs appears in both chunks; the
+    # homographs themselves stay apart.
+    entries = [
+        {"id": "bilītun-1", "word": "bilītun", "translations": {"en": ["speak"]}},
+        {"id": "bilītun-2", "word": "bilītun", "translations": {"en": ["mean"]}},
+        {"id": "bilāi", "word": "bilāi", "translations": {}},
+    ]
+    links = {"bilāi": [{"lemma": "bilītun",
+                        "target_ids": ["bilītun-1", "bilītun-2"]}]}
+    members = [[e["id"] for e in c["members"]]
+               for c in build_clusters(entries, links).values()]
+    assert members == [["bilītun-1", "bilāi"], ["bilītun-2", "bilāi"]]
+
+
+def test_build_clusters_follows_chain_to_base():
+    entries = [
+        {"id": "walns", "word": "walns"},
+        {"id": "walnan", "word": "walnan"},
+        {"id": "walnanin", "word": "walnanin"},
+    ]
+    links = {"walnan": [{"lemma": "walns", "target_ids": ["walns"]}],
+             "walnanin": [{"lemma": "walnan", "target_ids": ["walnan"]}]}
+    members = [[e["id"] for e in c["members"]]
+               for c in build_clusters(entries, links).values()]
+    assert members == [["walns", "walnan", "walnanin"]]
 
 
 # ── full chunk build ──
@@ -176,6 +205,19 @@ def test_build_chunks_member_ids_and_nvh_pos():
     assert [(c["pos"], c["pos_source"]) for c in chunks] == [
         ("preposition", "nvh"), ("conjunction", "nvh")]
     assert chunks[1]["text"] == "be (conjunction): and | und"
+
+
+def test_build_chunks_form_line_keeps_only_grammar():
+    entries = [
+        {"id": "wīrs", "word": "wīrs", "translations": {"en": ["man"]}},
+        {"id": "wīrans", "word": "wīrans", "desc": "↑ Wīrs acc sg m [Wīrans 93(12)]"},
+        {"id": "klāntamai", "word": "klāntamai",
+         "desc": "↑ Klantītun, ↑ Wīrs ps 1 sg m [klantemmai 29]"},
+    ]
+    links = {"wīrans": [{"ref": "Wīrs", "lemma": "wīrs", "target_ids": ["wīrs"]}],
+             "klāntamai": [{"ref": "Wīrs", "lemma": "wīrs", "target_ids": ["wīrs"]}]}
+    [chunk] = build_chunks(entries, links, None, langs=["en"])
+    assert chunk["text"].splitlines()[1:] == ["wīrans acc sg m", "klāntamai ps 1 sg m"]
 
 
 def test_build_chunks_passthrough_without_pos():
